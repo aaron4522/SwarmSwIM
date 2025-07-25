@@ -70,6 +70,19 @@ def parse_envrioment_parameters(input_path):
     except:
         data['is_vortex_currents']=False
 
+    # wind field
+    try: 
+        wind_field = parse_matrix(env_root.find('wind_field'))
+        if 0==int(wind_field[0]): data['is_wind_field']=False
+        else:
+            data['is_wind_field']=True
+            data['base_wind_speed'] = wind_field[0]
+            data['base_wind_direction'] = wind_field[1]
+            data['turbulence_intensity'] = wind_field[2]
+            data['temporal_frequency'] = wind_field[4]
+    except:
+        data['is_wind_field']=False
+
     # global waves
     global_waves = env_root.find('global_waves')
     if global_waves is not None and list(global_waves): 

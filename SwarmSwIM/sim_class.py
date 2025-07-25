@@ -2,6 +2,7 @@ import numpy as np
 import copy
 from .agent_class import Agent
 from . import sim_functions
+from .sail_extension import physics, sail_agent
 
 
 # Short term history memory of all agents, to consider acoustic effects
@@ -47,6 +48,17 @@ class Simulator():
                 self.environment['noise_currents_intensity'],
                 self.rnd
             )
+
+        # initialize wind physics
+        if self.environment['is_wind_field']:
+            print("WORKS")
+            self.wind_field = physics.WindField(
+            self.environment['base_wind_speed'],
+            self.environment['base_wind_direction'],
+            self.environment['turbulence_intensity'],
+            self.environment['temporal_frequency'],
+            self.rnd
+        )
         
     def agents_from_file(self,sim_xml):
         ''' Load agents based on simulation XML specification'''
@@ -115,6 +127,8 @@ class Simulator():
         self.calculate_currents()
         # execute physiscs
         for agent in self.agents:
+            if self.environment['is_wind_field']:  # TODO: BUG false, apply wind physics to agent velocity
+                agent.cmd_forces = self.wind_field.get_wind_at_position(agent.pos, self.Dt)
             agent.tick()
         # update the short term memory of positions
         self.update_history()
