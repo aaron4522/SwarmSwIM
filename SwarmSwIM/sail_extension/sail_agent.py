@@ -47,10 +47,12 @@ class SailAgent(Agent):
         if relative_wind_angle < -180:
             relative_wind_angle += 360
 
-        speed_mod_from_wind_angle = np.cos(np.deg2rad(relative_wind_angle))
+        # Speed up on downwind, slow on upwind
+        speed_mult_from_wind = np.cos(np.deg2rad(relative_wind_angle))
 
-        speed_multiplier = 0.2 + (speed_mod_from_wind_angle + 1) / 2
-        effective_speed = base_speed * speed_multiplier
+        effective_speed = (
+            base_speed * speed_mult_from_wind
+        ) + 0.2  # Add base speed to prevent getting stuck
 
         # Update agent pos
         vel_x = effective_speed * np.cos(np.deg2rad(self.psi))
@@ -64,7 +66,7 @@ class SailAgent(Agent):
 
         # TURN RATE
         # TODO: no apparent effect
-        self.cmd_yawrate = wind_magnitude * 0.5
+        # self.cmd_yawrate = wind_magnitude * 0.5
 
     def calculate_turn_rate(self, true_wind):
         """

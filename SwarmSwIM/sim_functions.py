@@ -27,6 +27,7 @@ def parse_envrioment_parameters(input_path):
     data = {}
     data['global_waves']=[]
     data['local_waves']=[]
+    data['wind_gusts'] = []
     path = get_sim_xml_path(input_path)
 
     tree = ET.parse(path)
@@ -79,9 +80,25 @@ def parse_envrioment_parameters(input_path):
             data['base_wind_speed'] = wind_field[0]
             data['base_wind_direction'] = wind_field[1]
             data['turbulence_intensity'] = wind_field[2]
-            data['temporal_frequency'] = wind_field[4]
-    except:
+            data['temporal_frequency'] = wind_field[3]
+    except Exception as e:
+        print(e)
         data['is_wind_field']=False
+
+    # wind gusts
+    wind_gusts = env_root.find('wind_gusts')
+    if wind_gusts is not None and list(wind_gusts):
+        data['is_wind_gusts'] = True
+        for gust in wind_gusts:
+            gust_param = {}
+            gust_param['amplitude'] = float(gust.find("amplitude").text)
+            gust_param['speed'] = float(gust.find("speed").text)
+            gust_param['frequency'] = float(gust.find("frequency").text)
+            gust_param['duration'] = float(gust.find("duration").text)
+            gust_param['wavelength'] = float(gust.find("wavelength").text)
+            data['wind_gusts'].append(gust_param)
+    else:
+        data['is_wind_gusts'] = False
 
     # global waves
     global_waves = env_root.find('global_waves')

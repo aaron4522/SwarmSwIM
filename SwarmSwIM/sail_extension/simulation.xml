@@ -24,23 +24,26 @@
         <vortex_currents> 0 0.0 </vortex_currents>
 
         <!-- Define wind field current -->
-        <!-- Adds a time & location-dependent wind force to surface agents. -->
-        <wind_field>
-            <!-- Strength of wind determining agent speed in m/s -->
-            <base_wind_speed>8.0</base_wind_speed>
-            <!-- Initial starting angle of wind in degrees -->
-            <base_wind_direction>270.0</base_wind_direction>
-            
-            <!-- Wind variations -->
-            <!-- TODO: wind vortex
-            Parameters are: 
-            Density [vortexes/100m^2]
-            Intensity [m/s]:
-            <vortex_currents> 0 0.0 </vortex_currents>
-            -->
-            <turbulence_intensity>0.15</turbulence_intensity>
-            <temporal_frequency>15.0</temporal_frequency> <!-- seconds -->
-        </wind_field>
+        <!-- Adds a time & location-dependent wind force to surface agents. 
+        Parameters are:
+            Wind Speed [m/s]
+            Direction [degrees]
+            Turbulence [standard deviations]
+            Temporal Frequency [seconds]-->
+        <wind_field> 3.0 45.0 0.2 5.0 </wind_field>
+
+        <!-- Define space and time-dependent gusts -->
+        <!-- Adds gusts following sinusoidal disturbances, space and time-dependent.
+        Direction of gust advancement corresponds with direction of disturbance -->
+        <wind_gusts>
+            <gust1>
+                <amplitude> 2.0 </amplitude>
+                <speed> 10.0 </speed>
+                <frequency> 0.1 </frequency>
+                <duration> 5.0 </duration>
+                <wavelength> 50.0 </wavelength>
+            </gust1>
+        </wind_gusts>
 
         <!-- Define wave sinusoidal current, Global -->
         <!-- Globally applied, sinusoidal time-dependent noise -->
@@ -110,8 +113,8 @@
             <state>
                 <!-- Initial state, one line for each agent -->
                 <!-- x, y, z, psi -->
-                0.0  0.0  69.0  46.0
-                3.0  0.0  69.0  180.0
+                0.0  0.0  1.0  46.0
+                3.0  0.0  1.0  180.0
                 <!-- Add more lines to add agents -->
             </state>
         </agent_type>

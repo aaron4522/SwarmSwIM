@@ -51,12 +51,24 @@ class Simulator():
 
         # initialize wind physics
         if self.environment['is_wind_field']:
-            print("WORKS")
+            if self.environment['is_wind_gusts']:
+                # TODO: support multiple wind gusts instead of just 1
+                gust_params = self.environment['wind_gusts'][0]
+                wind_gust = physics.WindGust(
+                    gust_params['amplitude'],
+                    gust_params['speed'],
+                    gust_params['frequency'],
+                    gust_params['duration'],
+                    gust_params['wavelength'],
+                )
+            else:
+                wind_gust = physics.WindGust(amplitude=0) # Generate non-gust
             self.wind_field = physics.WindField(
             self.environment['base_wind_speed'],
             self.environment['base_wind_direction'],
             self.environment['turbulence_intensity'],
             self.environment['temporal_frequency'],
+            wind_gust,
             self.rnd
         )
         
@@ -64,7 +76,9 @@ class Simulator():
         ''' Load agents based on simulation XML specification'''
         data = sim_functions.parse_agents(sim_xml)
         for key, value in data.items():
-            self._add(Agent(key,0.1,value[0],value[1],value[2],self.environment['seed']))
+            # TODO: add generator to make agent or sail agent depending on xml
+            # self._add(Agent(key,0.1,value[0],value[1],value[2],self.environment['seed']))
+            self._add(sail_agent.SailAgent(key,0.1,value[0],value[1],value[2],self.environment['seed']))
 
     @property
     def Dt(self):
@@ -78,7 +92,7 @@ class Simulator():
     def _add(self, new_agent):   
         ''' Private function Add an Agent to the simulation ''' 
         # add new agent to list
-        if not type(new_agent) == Agent:
+        if not isinstance(new_agent, Agent):
             print("ERROR: only Agent type object can be added, operation aborted")
             return
         # avoid clones
@@ -93,7 +107,7 @@ class Simulator():
         # initialize history (assume no movment in the past)
         self.history[new_agent.name] = [copy.deepcopy(self.agents[-1].pos)]*self._hist_length
     def _remove(self,new_agent):
-        if not type(new_agent) == Agent:
+        if not isinstance(new_agent, Agent):
             print("ERROR: only Agent type object can be removed, operation aborted")
             return
         # skip agent if not in list of agents

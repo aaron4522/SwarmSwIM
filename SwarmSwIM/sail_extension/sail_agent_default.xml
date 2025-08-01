@@ -33,7 +33,7 @@
         <heave_limit>0.3</heave_limit>
 
         <!-- "ideal", "step", "proportional", "yawrate" -->
-        <heading_control>step</heading_control>
+        <heading_control>yawrate</heading_control>
         <step_heading>30.0</step_heading> 
         <proportional_heading>1.0</proportional_heading>
         <yawrate_limit>60</yawrate_limit>

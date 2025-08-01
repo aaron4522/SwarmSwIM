@@ -42,7 +42,7 @@ class WindVisualization:
                     magnitude = np.linalg.norm(wind_vector)
                     direction = np.arctan2(wind_vector[1], wind_vector[0])
 
-                    arrow_length = magnitude * self.arrow_scale * 0.4
+                    arrow_length = magnitude * self.arrow_scale
                     dx = arrow_length * np.cos(direction)
                     dy = arrow_length * np.sin(direction)
 
