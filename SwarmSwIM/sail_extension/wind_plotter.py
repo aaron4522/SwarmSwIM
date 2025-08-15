@@ -2,66 +2,174 @@ import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
 import numpy as np
 from ..animator2D import Plotter
-from .physics import WindField
+from .physics import WindField, components_from_vector
 
 
 class WindVisualization:
     """Wind visualization for Plotter class"""
 
-    def __init__(self, wind_field, grid_size=5, arrow_scale=1.0, arrow_color="blue"):
+    def __init__(
+        self,
+        wind_field,
+        density=5,
+        arrow_color="blue",
+        show_contours=True,
+        min_arrow_speed=1,
+    ):
         """
         Initialize wind visualization
 
         Args:
             wind_field: WindField instance to visualize
-            grid_size: Spacing between wind arrows in the grid
-            arrow_scale: Scale factor for arrow size
+            density: m^2 per arrow (higher = less dense)
             arrow_color: Color for all wind arrows
+            show_contours: Whether to show wind speed contours
+            min_arrow_size: Culls arrows below this speed from being graphed
         """
         self.wind_field = wind_field
-        self.grid_size = grid_size
-        self.arrow_scale = arrow_scale
+        self.density = density
         self.arrow_color = arrow_color
-        self.wind_arrows = []
+        self.min_arrow_speed = min_arrow_speed
+        self.show_contours = show_contours
+        self.contour_collection = None
+        self.quiver_plot = None
+        self.colorbar = None
         self.time = 0.0
+        self._prev_x_range = []
+        self._prev_y_range = []
+        self._prev_mask = []
+
+    def create_wind_contour(self, ax, x_range, y_range):
+        if self.contour_collection is not None:
+            for coll in self.contour_collection.collections:
+                coll.remove()
+            self.contour_collection = None
+
+        x_start, x_end = min(x_range), max(x_range)
+        y_start, y_end = min(y_range), max(y_range)
+
+        # Create wind speed contours if enabled
+        if self.show_contours:
+            width = x_end - x_start
+            height = y_end - y_start
+            # Create a finer grid for contours
+            contour_resolution = max(20, int(min(width, height) / 2))
+            x_contour = np.linspace(x_range[0], x_range[1], contour_resolution)
+            y_contour = np.linspace(y_range[0], y_range[1], contour_resolution)
+            X_contour, Y_contour = np.meshgrid(x_contour, y_contour)
+
+            # Calculate wind speeds at all grid points
+            wind_speeds = np.zeros_like(X_contour)
+            for i in range(len(y_contour)):
+                for j in range(len(x_contour)):
+                    wind_vector = self.wind_field.get_wind_at_position(
+                        [X_contour[i, j], Y_contour[i, j], 0], self.time
+                    )
+                    wind_speeds[i, j] = np.linalg.norm(wind_vector)
+
+            # Create contour levels
+            max_speed = np.max(wind_speeds)
+            if max_speed > 0:
+                levels = np.linspace(0, max_speed, 15)
+                self.contour_collection = ax.contourf(
+                    X_contour,
+                    Y_contour,
+                    wind_speeds,
+                    levels=levels,
+                    cmap="viridis",
+                    alpha=0.6,
+                    zorder=0,
+                )
 
     def create_wind_grid(self, ax, x_range, y_range):
-        """Create a grid of wind arrows on the given axes"""
-        for arrow in self.wind_arrows:
-            arrow.remove()
-        self.wind_arrows.clear()
+        """Create a grid of wind arrows using quiver for better performance"""
+        # Create arrow grid
+        x_start, x_end = min(x_range), max(x_range)
+        y_start, y_end = min(y_range), max(y_range)
 
-        x_points = np.arange(x_range[0], x_range[1], self.grid_size)
-        y_points = np.arange(y_range[0], y_range[1], self.grid_size)
+        x_points = np.arange(x_start, x_end, self.density)
+        y_points = np.arange(y_start, y_end, self.density)
 
-        for x in x_points:
-            for y in y_points:
-                wind_vector = self.wind_field.get_wind_at_position([x, y, 0], self.time)
+        if len(x_points) == 0 or len(y_points) == 0:
+            return
 
-                if np.linalg.norm(wind_vector) > 0.1:
-                    magnitude = np.linalg.norm(wind_vector)
-                    direction = np.arctan2(wind_vector[1], wind_vector[0])
+        # Create meshgrid for vectorized calculations
+        X, Y = np.meshgrid(x_points, y_points)
 
-                    arrow_length = magnitude * self.arrow_scale
-                    dx = arrow_length * np.cos(direction)
-                    dy = arrow_length * np.sin(direction)
+        # Calculate wind vectors
+        U = np.zeros_like(X)
+        V = np.zeros_like(Y)
 
-                    head_width = max(0.2, arrow_length * 0.1)
-                    head_length = max(0.15, arrow_length * 0.08)
+        for i in range(X.shape[0]):
+            for j in range(X.shape[1]):
+                wind_vector = self.wind_field.get_wind_at_position(
+                    [X[i, j], Y[i, j], 0], self.time
+                )
+                U[i, j] = wind_vector[0]
+                V[i, j] = -wind_vector[1]  # Flip Y component for inverted display axis
 
-                    arrow = ax.arrow(
-                        x,
-                        y,
-                        dx,
-                        dy,
-                        head_width=head_width,
-                        head_length=head_length,
-                        fc=self.arrow_color,
-                        ec=self.arrow_color,
-                        alpha=0.7,
-                        zorder=1,
-                    )
-                    self.wind_arrows.append(arrow)
+        # Filter out very small winds
+        magnitude = np.sqrt(U**2 + V**2)
+        mask = magnitude >= self.min_arrow_speed
+        X = X[mask]
+        Y = Y[mask]
+        U = U[mask]
+        V = V[mask]
+
+        # Update wind grid when axis limits change or recreate if needed
+        grid_changed = (
+            self.quiver_plot is None
+            or not np.array_equal(self._prev_x_range, x_range)
+            or not np.array_equal(self._prev_y_range, y_range)
+            or not np.array_equal(self._prev_mask, mask)
+        )
+
+        if grid_changed:
+            if self.quiver_plot is not None:
+                self.quiver_plot.remove()
+
+            self.quiver_plot = ax.quiver(
+                X,
+                Y,
+                U,
+                V,
+                color=self.arrow_color,
+                alpha=0.7,
+                zorder=2,
+                width=0.003,
+                headwidth=3,
+                headlength=4,
+            )
+            self._prev_x_range = x_range
+            self._prev_y_range = y_range
+            self._prev_mask = mask
+        else:
+            # User hasn't panned/zoomed the simulation, no need to redraw the entire plot--just direction & magnitude
+            self.quiver_plot.set_UVC(U, V)
+
+        return self.quiver_plot
+
+    def add_wind_legend(self, fig, ax):
+        """Add a wind speed legend and colorbar to the plot"""
+        if self.show_contours and self.contour_collection is not None:
+            # Remove existing colorbar if it exists
+            if hasattr(self, "colorbar") and self.colorbar is not None:
+                self.colorbar.remove()
+
+            # Add colorbar for wind speed contours
+            self.colorbar = fig.colorbar(
+                self.contour_collection,
+                ax=ax,
+                orientation="vertical",
+                pad=0.02,
+                aspect=16,
+                shrink=0.8,
+            )
+            self.colorbar.set_label(
+                "Wind Speed (m/s)", size=12, rotation=90, labelpad=15
+            )
+            return self.colorbar
+        return None
 
     def update_time(self, dt):
         self.time += dt
@@ -77,7 +185,10 @@ class WindPlotter(Plotter):
         SIZE=30,
         artistics=[],
         show_wind=True,
-        wind_grid_size=5,
+        wind_grid_density=3,
+        show_waypoints=True,
+        show_wind_contours=True,
+        wind_update_interval=10,
     ):
         """
         Initialize WindPlotter with wind visualization
@@ -88,54 +199,93 @@ class WindPlotter(Plotter):
             SIZE: Plot size limit
             artistics: Additional artistic elements
             show_wind: Whether to show wind visualization
-            wind_grid_size: Spacing between wind arrows
+            wind_grid_density: Spacing between wind arrows
+            show_waypoints: Whether to show waypoints
+            show_wind_contours: Whether to show wind speed contours
+            wind_update_interval: Number of frames between wind visualization updates
         """
         super().__init__(simulator, SIZE, artistics)
 
         self.show_wind = show_wind
+        self.show_waypoints = show_waypoints
+        self.show_wind_contours = show_wind_contours
         self.wind_field = wind_field
-        self.SIZE = SIZE
+        self.wind_update_interval = wind_update_interval
 
         if self.show_wind:
-            self.wind_viz = WindVisualization(self.wind_field, grid_size=wind_grid_size)
+            self.wind_viz = WindVisualization(
+                self.wind_field,
+                density=wind_grid_density,
+                show_contours=show_wind_contours,
+            )
+            # Initialize with default bounds, will be updated dynamically
             self.wind_viz.create_wind_grid(self.ax, (-SIZE, SIZE), (-SIZE, SIZE))
 
-            self.add_wind_legend()
+    def check_waypoints(self):
+        """add or remove additional waypoints with ongoing simulation"""
+        # Add new waypoints
+        for waypoint in self.sim.waypoints:
+            if not waypoint["name"] in self.animation:
+                self.add_waypoint(waypoint)
 
-    def add_wind_legend(self):
-        """Add a wind speed legend to the plot"""
-        from matplotlib.lines import Line2D
+        # Remove old waypoints no longer referenced in simulation
+        temporary_namelist = [wp["name"] for wp in self.sim.waypoints]
+        keys_to_remove = []
+        for key in self.animation:
+            if not key in temporary_namelist:
+                keys_to_remove.append(key)
+        self.detections = {
+            key: self.animation[key]
+            for key in self.animation
+            if key not in keys_to_remove
+        }
 
-        # Create custom legend elements for different wind speeds
-        legend_elements = []
-        wind_speeds = [2.5, 5.0, 10.0]  # m/s
-
-        for speed in wind_speeds:
-            line_width = max(1, speed * 0.5)  # Scale line width with speed
-
-            legend_elements.append(
-                Line2D(
-                    [0],
-                    [0],
-                    color=self.wind_viz.arrow_color,
-                    linewidth=line_width,
-                    label=f"{speed} m/s wind",
-                    marker=">",
-                    markersize=8,
-                    markerfacecolor=self.wind_viz.arrow_color,
-                    markeredgecolor=self.wind_viz.arrow_color,
-                )
-            )
-
-        self.ax.legend(
-            handles=legend_elements,
-            title="Wind Speed",
-            loc="center left",
-            bbox_to_anchor=(1.02, 0.05),
-            frameon=True,
-            fancybox=True,
-            shadow=True,
+    def add_waypoint(self, waypoint):
+        """Add a waypoint to the animation"""
+        waypoint_marker = plt.Circle(
+            (waypoint["x"], waypoint["y"]),
+            radius=0.5,
+            color="orange",
+            fill=True,
+            alpha=1.0,
+            zorder=10,
         )
+        self.ax.add_patch(waypoint_marker)
+
+        waypoint_label = self.ax.text(
+            waypoint["x"],
+            waypoint["y"] + 2,
+            waypoint["name"],
+            ha="center",
+            va="bottom",
+            color="orange",
+            fontweight="bold",
+            zorder=11,
+        )
+        self.animation[waypoint["name"]] = {
+            "marker": waypoint_marker,
+            "label": waypoint_label,
+        }
+
+    def draw_agent_label(self, agent):
+        """Create a label showing agent speed, heading, and position that follows each agent"""
+        label_text = f"{agent.name}: {agent.vel:.1f}m/s | " f"H:{agent.psi:.0f}°"
+
+        # Offset text from agent's current position
+        x = agent.pos[0]
+        y = agent.pos[1] + 1
+
+        agent_stats = self.ax.text(
+            x,
+            y,
+            label_text,
+            fontsize=6,
+            bbox=dict(boxstyle="round,pad=0.2", facecolor="white", alpha=0.9),
+            horizontalalignment="center",
+            verticalalignment="top",
+        )
+
+        self.animation[agent.name]["legend"] = agent_stats
 
     # TODO: better way? super()?
     def update_plot(self, callback=None):
@@ -170,43 +320,72 @@ class WindPlotter(Plotter):
                 # Update the polygon coordinates
                 pts = self.calculate_triangle(agent)
                 self.animation[agent.name]["figure"].set_xy(pts)
+
+                # Update agent legend
+                self.draw_agent_label(agent)
+
                 # add to artists list
                 artist_list.extend(
                     [
                         self.animation[agent.name]["line"],
                         self.animation[agent.name]["figure"],
+                        self.animation[agent.name]["legend"],
                     ]
                 )
 
             # Update wind visualization if enabled
-            if self.show_wind and hasattr(self, "wind_viz"):
-                # Update wind field time
+            if self.show_wind:
                 self.wind_viz.update_time(self.sim.Dt)
 
-                # Periodically refresh wind grid (every 10 frames for performance)
-                if frame % 10 == 0:
+                # Refresh wind grid and contours less frequently for better performance
+                if frame % self.wind_update_interval == 0:
+                    # Update wind grid for time-varying wind
                     self.wind_viz.create_wind_grid(
-                        self.ax, (-self.SIZE, self.SIZE), (-self.SIZE, self.SIZE)
+                        self.ax,
+                        np.round(self.ax.get_xlim()),
+                        np.round(self.ax.get_ylim()),
                     )
 
-                # Add wind arrows to artist list
-                artist_list.extend(self.wind_viz.wind_arrows)
+                    if self.show_wind_contours:
+                        self.wind_viz.create_wind_contour(
+                            self.ax,
+                            np.round(self.ax.get_xlim()),
+                            np.round(self.ax.get_ylim()),
+                        )
+                        self.wind_viz.add_wind_legend(self.fig2, self.ax)
+
+                # Always add existing wind grid to artist list for persistence
+                if self.wind_viz.quiver_plot is not None:
+                    artist_list.append(self.wind_viz.quiver_plot)
+
+                # Always add existing contour collection to artist list for persistence
+                if self.wind_viz.contour_collection is not None and hasattr(
+                    self.wind_viz.contour_collection, "collections"
+                ):
+                    artist_list.extend(self.wind_viz.contour_collection.collections)
+
+            if self.show_waypoints:
+                self.check_waypoints()
+                for waypoint in self.sim.waypoints:
+                    artist_list.extend(
+                        [
+                            self.animation[waypoint["name"]]["marker"],
+                            self.animation[waypoint["name"]]["label"],
+                        ]
+                    )
 
             self.ax.relim()
             return artist_list
 
-        # Set up animation with the custom update function
+        # get interval for real-time
         interval = max(1, int(self.sim.Dt * 1000))
+        # return self.lines_list #, p
         ani = FuncAnimation(
             self.fig2, update, frames=range(10000), interval=interval, blit=True
         )
 
         if callback:
-            try:
-                ani.event_source.add_callback(callback)
-            except AttributeError:
-                # Fallback if event_source is not available
-                pass
+            ani.event_source.add_callback(callback)
         plt.show()
 
 
