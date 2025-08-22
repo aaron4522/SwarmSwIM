@@ -72,6 +72,11 @@ class Simulator():
             self.rnd
         )
         
+        # load waypoints
+        self.waypoints = []
+        if self.environment.get('is_waypoints', False):
+            self.waypoints = self.environment['waypoints']
+        
     def agents_from_file(self,sim_xml):
         ''' Load agents based on simulation XML specification'''
         data = sim_functions.parse_agents(sim_xml)
@@ -141,8 +146,9 @@ class Simulator():
         self.calculate_currents()
         # execute physiscs
         for agent in self.agents:
-            if self.environment['is_wind_field']:  # TODO: BUG false, apply wind physics to agent velocity
-                agent.cmd_forces = self.wind_field.get_wind_at_position(agent.pos, self.Dt)
+            if self.environment['is_wind_field']:
+                pass
+                # agent.cmd_forces = self.wind_field.get_wind_at_position(agent.pos, self.time)
             agent.tick()
         # update the short term memory of positions
         self.update_history()

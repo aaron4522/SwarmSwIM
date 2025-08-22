@@ -28,6 +28,7 @@ def parse_envrioment_parameters(input_path):
     data['global_waves']=[]
     data['local_waves']=[]
     data['wind_gusts'] = []
+    data['waypoints'] = []
     path = get_sim_xml_path(input_path)
 
     tree = ET.parse(path)
@@ -99,6 +100,23 @@ def parse_envrioment_parameters(input_path):
             data['wind_gusts'].append(gust_param)
     else:
         data['is_wind_gusts'] = False
+
+    # waypoints
+    waypoints = env_root.find('waypoints')
+    if waypoints is not None and list(waypoints):
+        data['is_waypoints'] = True
+        for waypoint in waypoints:
+            waypoint_param = {}
+            x_elem = waypoint.find("x")
+            y_elem = waypoint.find("y")
+            name_elem = waypoint.find("name")
+            
+            waypoint_param['x'] = float(x_elem.text) if x_elem is not None and x_elem.text else 0.0
+            waypoint_param['y'] = float(y_elem.text) if y_elem is not None and y_elem.text else 0.0
+            waypoint_param['name'] = name_elem.text if name_elem is not None and name_elem.text else f"waypoint_{len(data['waypoints'])}"
+            data['waypoints'].append(waypoint_param)
+    else:
+        data['is_waypoints'] = False
 
     # global waves
     global_waves = env_root.find('global_waves')
