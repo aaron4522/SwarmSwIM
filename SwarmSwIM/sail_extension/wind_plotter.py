@@ -269,7 +269,8 @@ class WindPlotter(Plotter):
 
     def draw_agent_label(self, agent):
         """Create a label showing agent speed, heading, and position that follows each agent"""
-        label_text = f"{agent.name}: {agent.vel:.1f}m/s | " f"H:{agent.psi:.0f}°"
+        # label_text = f"{agent.name}: {agent.vel:.1f}m/s | H:{agent.psi:.0f}°"
+        label_text = f"{agent}"
 
         # Offset text from agent's current position
         x = agent.pos[0]
@@ -283,6 +284,7 @@ class WindPlotter(Plotter):
             bbox=dict(boxstyle="round,pad=0.2", facecolor="white", alpha=0.9),
             horizontalalignment="center",
             verticalalignment="top",
+            linespacing=0.5,
         )
 
         self.animation[agent.name]["legend"] = agent_stats

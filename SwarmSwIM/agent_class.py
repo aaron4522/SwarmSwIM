@@ -67,6 +67,16 @@ class Agent():
         self.other_forces = np.array([0, 0])
 
     @property
+    def vel(self):
+        # TODO: No depth velocity calc, maybe better velocity calculation?
+        d = np.linalg.norm(self.pos[0:2] - self.last_step_planar)
+        # dx = self.pos[0] - self.last_step_planar[0]
+        # dy = self.pos[1] - self.last_step_planar[1]
+        # d = np.sqrt(
+        # print(f"{self.last_step_planar} -> {self.pos}")
+        return d / self.Dt
+
+    @property
     def cmd_forces(self):
         return self._cmd_force
 
