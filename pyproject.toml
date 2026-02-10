@@ -13,7 +13,7 @@ authors = [
 requires-python = ">=3.8"
 dependencies = [
   "numpy",
-  "matplotlib",
+  "matplotlib"==3.6.0,
   "fastapi",
   "uvicorn",
   "opencv-python"
