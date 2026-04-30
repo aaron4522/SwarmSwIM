@@ -1,6 +1,7 @@
 import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
 import numpy as np
+import os
 from ..animator2D import Plotter
 from .physics import WindField, components_from_vector
 
@@ -12,9 +13,9 @@ class WindVisualization:
         self,
         wind_field,
         density=5,
-        arrow_color="blue",
+        arrow_color="lightgrey",
         show_contours=True,
-        min_arrow_speed=1,
+        min_arrow_speed=2,
     ):
         """
         Initialize wind visualization
@@ -185,10 +186,14 @@ class WindPlotter(Plotter):
         SIZE=30,
         artistics=[],
         show_wind=True,
-        wind_grid_density=3,
+        wind_grid_density=10,
         show_waypoints=True,
         show_wind_contours=True,
         wind_update_interval=10,
+        show_agent_targets=True,
+        show_agent_status=True,
+        agent_goal_radius=0.18,
+        near_radius=float(os.environ.get("SWARM_NEAR_RADIUS", "0.0")),
     ):
         """
         Initialize WindPlotter with wind visualization
@@ -206,11 +211,21 @@ class WindPlotter(Plotter):
         """
         super().__init__(simulator, SIZE, artistics)
 
+        # Toroidal / wrap-around mode flag (shared with flocking_nav)
+        self.toroidal = os.environ.get("SWARM_TOROIDAL", "0").strip().lower() in ("1", "true", "yes", "on")
+        # Domain half-size for wrap checks; matches [-SIZE, SIZE]
+        self.domain_half = float(SIZE)
+
         self.show_wind = show_wind
         self.show_waypoints = show_waypoints
         self.show_wind_contours = show_wind_contours
         self.wind_field = wind_field
         self.wind_update_interval = wind_update_interval
+        self.show_agent_targets = show_agent_targets
+        self.show_agent_status = show_agent_status
+        self.agent_goal_radius = agent_goal_radius
+        self.agent_goal_color = "magenta"
+        self.near_radius = float(near_radius)
 
         if self.show_wind:
             self.wind_viz = WindVisualization(
@@ -220,6 +235,50 @@ class WindPlotter(Plotter):
             )
             # Initialize with default bounds, will be updated dynamically
             self.wind_viz.create_wind_grid(self.ax, (-SIZE, SIZE), (-SIZE, SIZE))
+
+        # Info overlay (e.g. collision counter) — top-left corner
+        self._info_text = self.ax.text(
+            0.01, 0.99, "",
+            transform=self.ax.transAxes,
+            va="top", ha="left",
+            fontsize=9, color="white",
+            bbox=dict(facecolor="black", alpha=0.55, pad=3, boxstyle="round"),
+            zorder=20,
+        )
+
+    def set_info(self, text: str):
+        """Update the info overlay (e.g. 'Collisions: 3'). Thread-safe via matplotlib."""
+        self._info_text.set_text(text)
+
+    def add(self, agent, color):
+        super().add(agent, color)
+        self.animation[agent.name]["orig_color"] = color
+
+    def _break_toroidal_trail(self, xs, ys):
+        """
+        For toroidal domains, insert NaNs into the trail whenever the jump between
+        consecutive samples crosses more than half the domain, so that Matplotlib
+        does not draw a long straight line across the wrap.
+        """
+        # If not in toroidal mode or not enough points, keep as-is
+        if not getattr(self, "toroidal", False) or len(xs) < 2:
+            return xs, ys
+
+        L = self.domain_half
+        new_x = [xs[0]]
+        new_y = [ys[0]]
+
+        for i in range(1, len(xs)):
+            dx = xs[i] - xs[i - 1]
+            dy = ys[i] - ys[i - 1]
+            # Large jump -> treat as wrap and break the line
+            if abs(dx) > L or abs(dy) > L:
+                new_x.append(np.nan)
+                new_y.append(np.nan)
+            new_x.append(xs[i])
+            new_y.append(ys[i])
+
+        return np.asarray(new_x), np.asarray(new_y)
 
     def check_waypoints(self):
         """add or remove additional waypoints with ongoing simulation"""
@@ -259,7 +318,7 @@ class WindPlotter(Plotter):
             ha="center",
             va="bottom",
             color="orange",
-            fontweight="bold",
+            fontsize=6,
             zorder=11,
         )
         self.animation[waypoint["name"]] = {
@@ -268,27 +327,81 @@ class WindPlotter(Plotter):
         }
 
     def draw_agent_label(self, agent):
-        """Create a label showing agent speed, heading, and position that follows each agent"""
-        # label_text = f"{agent.name}: {agent.vel:.1f}m/s | H:{agent.psi:.0f}°"
-        label_text = f"{agent}"
+        """Create or update the status label next to each agent. Honors self.show_agent_status."""
+        if agent.name not in self.animation:
+            return
+        entry = self.animation[agent.name]
 
-        # Offset text from agent's current position
+        # If disabled, hide existing label if any
+        if not getattr(self, "show_agent_status", True):
+            lbl = entry.get("legend")
+            if lbl is not None:
+                lbl.set_visible(False)
+            return
+
+        label_text = f"{agent}"
         x = agent.pos[0]
         y = agent.pos[1] + 1
 
-        agent_stats = self.ax.text(
-            x,
-            y,
-            label_text,
-            fontsize=6,
-            bbox=dict(boxstyle="round,pad=0.2", facecolor="white", alpha=0.9),
-            horizontalalignment="center",
-            verticalalignment="top",
-            linespacing=0.5,
-        )
+        lbl = entry.get("legend")
+        if lbl is None:
+            lbl = self.ax.text(
+                x, y, label_text,
+                fontsize=6,
+                bbox=dict(boxstyle="round,pad=0.2", facecolor="white", alpha=0.9),
+                horizontalalignment="center",
+                verticalalignment="top",
+                linespacing=0.5,
+                zorder=14,
+            )
+            entry["legend"] = lbl
+        else:
+            lbl.set_text(label_text)
+            lbl.set_position((x, y))
+            lbl.set_visible(True)
+    def ensure_agent_goal(self, agent):
+        """Create or update a non-waypoint goal marker for an agent.
+        Uses agent.viz_target {"x":..., "y":...} if available.
+        """
+        if not self.show_agent_targets:
+            return None, None
+        if agent.name not in self.animation:
+            return None, None
 
-        self.animation[agent.name]["legend"] = agent_stats
+        entry = self.animation[agent.name]
+        goal_marker = entry.get("goal_marker")
+        goal_label = entry.get("goal_label")
 
+        tgt = getattr(agent, "viz_target", None)
+        if tgt is None or "x" not in tgt or "y" not in tgt:
+            if goal_marker is not None:
+                goal_marker.set_visible(False)
+            if goal_label is not None:
+                goal_label.set_visible(False)
+            return goal_marker, goal_label
+
+        gx = float(tgt["x"]); gy = float(tgt["y"])
+
+        if goal_marker is None:
+            goal_marker = plt.Circle(
+                (gx, gy), radius=self.agent_goal_radius,
+                color=self.agent_goal_color, fill=False, lw=1.0, zorder=12
+            )
+            self.ax.add_patch(goal_marker)
+            entry["goal_marker"] = goal_marker
+        if goal_label is None:
+            goal_label = self.ax.text(
+                gx, gy + 0.8, "goal",
+                ha="center", va="bottom",
+                color=self.agent_goal_color, fontsize=5, zorder=13
+            )
+            entry["goal_label"] = goal_label
+
+        goal_marker.center = (gx, gy)
+        goal_marker.set_visible(True)
+        goal_label.set_position((gx, gy + 0.8))
+        goal_label.set_visible(True)
+        return goal_marker, goal_label
     # TODO: better way? super()?
     def update_plot(self, callback=None):
         """Override with wind visualization updates"""
@@ -297,8 +410,11 @@ class WindPlotter(Plotter):
             self.check_agents()
             artist_list = []
 
+            # Pre-compute all agent positions for proximity checks
+            all_pos = np.array([[a.pos[0], a.pos[1]] for a in self.sim.agents])
+
             # Update agents (from parent class logic)
-            for agent in self.sim.agents:
+            for idx, agent in enumerate(self.sim.agents):
                 # add position to list
                 self.animation[agent.name]["x"] = np.append(
                     self.animation[agent.name]["x"], agent.pos[0]
@@ -307,31 +423,48 @@ class WindPlotter(Plotter):
                     self.animation[agent.name]["y"], agent.pos[1]
                 )
                 # Pop excess
-                if len(self.animation[agent.name]["x"]) > 300:
+                if len(self.animation[agent.name]["x"]) > 200:
                     self.animation[agent.name]["x"] = np.delete(
                         self.animation[agent.name]["x"], 0
                     )
-                if len(self.animation[agent.name]["y"]) > 300:
+                if len(self.animation[agent.name]["y"]) > 200:
                     self.animation[agent.name]["y"] = np.delete(
                         self.animation[agent.name]["y"], 0
                     )
-                # Update the plot lines paths
-                self.animation[agent.name]["line"].set_data(
-                    self.animation[agent.name]["x"], self.animation[agent.name]["y"]
-                )
+                # Update the plot lines paths, with toroidal-aware trail breaking
+                hx = self.animation[agent.name]["x"]
+                hy = self.animation[agent.name]["y"]
+                xs, ys = self._break_toroidal_trail(hx, hy)
+                self.animation[agent.name]["line"].set_data(xs, ys)
                 # Update the polygon coordinates
                 pts = self.calculate_triangle(agent)
                 self.animation[agent.name]["figure"].set_xy(pts)
 
-                # Update agent legend
+                # Proximity colour: red if any neighbour is within near_radius, else original
+                if self.near_radius > 0 and len(all_pos) > 1:
+                    others = np.delete(all_pos, idx, axis=0)
+                    min_dist = np.hypot(others[:, 0] - agent.pos[0], others[:, 1] - agent.pos[1]).min()
+                    fig_color = "red" if min_dist < self.near_radius else self.animation[agent.name]["orig_color"]
+                    self.animation[agent.name]["figure"].set_color(fig_color)
+
+                # Update or hide agent legend depending on toggle
                 self.draw_agent_label(agent)
+                legend = self.animation[agent.name].get("legend") if agent.name in self.animation else None
+                if self.show_agent_status and legend is not None and legend.get_visible():
+                    artist_list.append(legend)
+
+                # Update per-agent goal visualization and add to artists if visible
+                gm, gl = self.ensure_agent_goal(agent)
+                if gm is not None and gm.get_visible():
+                    artist_list.append(gm)
+                if gl is not None and gl.get_visible():
+                    artist_list.append(gl)
 
                 # add to artists list
                 artist_list.extend(
                     [
                         self.animation[agent.name]["line"],
                         self.animation[agent.name]["figure"],
-                        self.animation[agent.name]["legend"],
                     ]
                 )
 
@@ -377,6 +510,7 @@ class WindPlotter(Plotter):
                     )
 
             self.ax.relim()
+            artist_list.append(self._info_text)
             return artist_list
 
         # get interval for real-time
